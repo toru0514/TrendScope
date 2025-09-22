@@ -1,79 +1,139 @@
+// app/(dashboard)/page.tsx
+import "server-only";
+import { createClient } from "@supabase/supabase-js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import TrendFilter from "@/app/_components/filters/TrendFilter";
-import TopList from "@/app/_components/charts/TopList";
-import PostSamples from "@/app/_components/table/PostSamples";
-import TrendLineSection from "@/app/_components/charts/TrendLineSection";
-import { supabaseBrowser } from "@/lib/supabase";
 
-function sinceISO(kind: string) {
-  const d = new Date();
-  const map: Record<string, number> = { "7d": 7, "30d": 30, "90d": 90 };
-  d.setDate(d.getDate() - (map[kind] ?? 30));
-  return d.toISOString();
+import GenreFilter from "@/app/_components/filters/GenreFilter";
+import BarChart, { BarDatum } from "@/app/_components/charts/BarChart";
+import PriceHistogram from "@/app/_components/trends/PriceHistogram";
+import ReviewStatsCard from "@/app/_components/trends/ReviewStatsCard";
+import TopShopsTable from "@/app/_components/trends/TopShopsTable";
+import KeywordList from "@/app/_components/trends/KeywordList";
+import FetchRakutenButton from "@/app/_components/FetchRakutenButton";
+
+function truncate(s: string, n = 24) {
+  if (!s) return "";
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 
-export default async function DashboardPage({ searchParams }: { searchParams?: Record<string, string> }) {
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+export default async function DashboardPage({
+                                              searchParams,
+                                            }: {
+  // ✅ Promise で受け取り
+  searchParams: Promise<{ genre?: string }>;
+}) {
+  // ✅ まず await
   const sp = await searchParams;
+  const genreId = sp?.genre ?? "216129";
 
-  const since = sp?.since ?? "30d";
-  const intent = sp?.intent ?? "request";
+  // ----- 以下はそのまま -----
+  const { data: latest, error: latestErr } = await supabase
+    .from("market_rankings")
+    .select("captured_at")
+    .eq("genre_id", genreId)
+    .order("captured_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  const supabase = supabaseBrowser();
+  let rankings:
+    | Array<{ rank: number; title: string | null; price: string | null; url: string | null; captured_at: string }>
+    | [] = [];
+  let listErr: any = null;
 
-  const { data: lineRaw } = await supabase
-    .from("rollups_hourly")
-    .select("bucket,count")
-    .gte("bucket", sinceISO(since))
-    .eq("intent", intent)
-    .order("bucket", { ascending: true });
+  if (latest?.captured_at) {
+    const { data, error } = await supabase
+      .from("market_rankings")
+      .select("rank, title, price, url, captured_at")
+      .eq("genre_id", genreId)
+      .eq("captured_at", latest.captured_at)
+      .order("rank", { ascending: true })
+      .limit(30);
+    rankings = data ?? [];
+    listErr = error;
+  }
 
-  const { data: painTopRaw } = await supabase
-    .from("rollups_hourly")
-    .select("facet_key,count")
-    .gte("bucket", sinceISO(since))
-    .eq("intent", "complaint")
-    .order("count", { ascending: false }).limit(10);
+  const priceTop10: BarDatum[] = (rankings ?? [])
+    .filter((r) => r.price != null)
+    .slice(0, 10)
+    .map((r) => ({ label: truncate(r.title ?? ""), value: Number(r.price) }));
 
-  const { data: desireTopRaw } = await supabase
-    .from("rollups_hourly")
-    .select("facet_key,count")
-    .gte("bucket", sinceISO(since))
-    .eq("intent", "request")
-    .order("count", { ascending: false }).limit(10);
-
-  const { data: samples } = await supabase
-    .from("post_insights")
-    .select("post_id,summary,intent")
-    .eq("intent", intent)
-    .limit(20);
-
-  const lineSeries = (lineRaw ?? []).map((r: any) => ({ bucket: r.bucket, count: r.count }));
-  const painTop    = (painTopRaw   ?? []).map((r: any) => ({ key: r.facet_key, count: r.count }));
-  const desireTop  = (desireTopRaw ?? []).map((r: any) => ({ key: r.facet_key, count: r.count }));
+  const capturedLabel = latest?.captured_at ? new Date(latest.captured_at).toLocaleString() : "—";
 
   return (
     <div className="grid gap-6 md:grid-cols-12">
-      <Card className="md:col-span-3">
-        <CardHeader><CardTitle>フィルタ</CardTitle></CardHeader>
-        <CardContent><TrendFilter defaultSince={since} defaultIntent={intent}/></CardContent>
-      </Card>
+      <div className="md:col-span-12 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">楽天トレンドダッシュボード</h1>
+        <FetchRakutenButton genreId={genreId} />
+      </div>
 
-      {/* Chart.js 部分はクライアント側へ委譲 */}
-      <TrendLineSection series={lineSeries} />
+      <div className="md:col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2"><PriceHistogram genreId={genreId} /></div>
+        <ReviewStatsCard genreId={genreId} />
+      </div>
 
-      <Card className="md:col-span-6">
-        <CardHeader><CardTitle>痛みポイント Top10</CardTitle></CardHeader>
-        <CardContent><TopList items={painTop}/></CardContent>
-      </Card>
-
-      <Card className="md:col-span-6">
-        <CardHeader><CardTitle>要望 Top10</CardTitle></CardHeader>
-        <CardContent><TopList items={desireTop}/></CardContent>
-      </Card>
+      <div className="md:col-span-12 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <TopShopsTable genreId={genreId} />
+        <KeywordList genreId={genreId} />
+      </div>
 
       <Card className="md:col-span-12">
-        <CardHeader><CardTitle>投稿サンプル</CardTitle></CardHeader>
-        <CardContent><PostSamples rows={samples ?? []}/></CardContent>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>楽天ランキング（ジャンル切替）</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <GenreFilter />
+          <p className="text-xs text-muted-foreground mt-2">データ提供: 楽天ウェブサービス</p>
+          {(latestErr || listErr) && (
+            <p className="mt-2 text-xs text-red-600">取得エラー: {latestErr?.message || listErr?.message}</p>
+          )}
+          {!rankings?.length && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              データがまだありません。まず
+              <code className="mx-1 rounded bg-muted px-1 py-0.5">/api/fetch-rakuten</code>
+              を実行してスナップショットを作成してください。
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="md:col-span-6">
+        <CardHeader><CardTitle>価格 Top10（最新スナップショット）</CardTitle></CardHeader>
+        <CardContent><BarChart data={priceTop10} title="価格(円)" /></CardContent>
+      </Card>
+
+      <Card className="md:col-span-6">
+        <CardHeader><CardTitle>ランキング Top30（{capturedLabel}）</CardTitle></CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+              <tr className="text-left border-b">
+                <th className="p-2">順位</th>
+                <th className="p-2">商品名</th>
+                <th className="p-2">価格</th>
+              </tr>
+              </thead>
+              <tbody>
+              {(rankings ?? []).map((item) => (
+                <tr key={`${item.rank}-${item.title}`} className="border-b hover:bg-neutral-50">
+                  <td className="p-2">{item.rank}</td>
+                  <td className="p-2">
+                    <a href={item.url ?? "#"} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                      {item.title}
+                    </a>
+                  </td>
+                  <td className="p-2">{item.price != null ? `${Number(item.price).toLocaleString()} 円` : "—"}</td>
+                </tr>
+              ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
       </Card>
     </div>
   );
