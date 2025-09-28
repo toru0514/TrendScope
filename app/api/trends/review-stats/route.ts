@@ -10,7 +10,12 @@ export async function GET(req: NextRequest) {
     .from("v_review_stats")
     .select("avg_rating,med_rating,avg_review_count")
     .eq("genre_id", genreId)
-    .single();
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    .maybeSingle();
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+  if (!data) {
+    return NextResponse.json({ ok: true, data: null });
+  }
   return NextResponse.json({ ok: true, data });
 }

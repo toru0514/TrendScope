@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const limit = Number(searchParams.get("limit") ?? 10);
   const { data, error } = await supabase
     .from("v_top_shops")
-    .select("shop_name,items,avg_price")
+    .select("shop_name,items,avg_price,min_price,max_price")
     .eq("genre_id", genreId)
     .order("items", { ascending: false })
     .limit(limit);

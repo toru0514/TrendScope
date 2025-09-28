@@ -17,7 +17,9 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !RAKUTEN_APP_ID) {
   });
 }
 
-const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
 // ---- helpers ----
 function normalizeImages(
@@ -51,9 +53,19 @@ function extractShopFromUrl(u?: string | null): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !RAKUTEN_APP_ID) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "サーバー環境変数 (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / RAKUTEN_APP_ID) を設定してください",
+        },
+        { status: 500 }
+      );
+    }
+
     // --- input ---
     const { searchParams } = new URL(req.url);
-    const genreId = searchParams.get("genreId") ?? "216129";
+    const genreId = searchParams.get("genreId") ?? "100486";
 
     // --- call Rakuten Ranking API ---
     const endpoint = new URL(
@@ -65,8 +77,25 @@ export async function POST(req: NextRequest) {
 
     const res = await fetch(endpoint.toString(), { cache: "no-store" });
     if (!res.ok) {
+      let detail = "";
+      try {
+        const text = await res.text();
+        if (text) {
+          try {
+            const json = JSON.parse(text);
+            detail = json?.error_description || json?.error || text;
+          } catch {
+            detail = text;
+          }
+        }
+      } catch {
+        // ignore body parse errors
+      }
       return NextResponse.json(
-        { ok: false, error: `Rakuten ${res.status}` },
+        {
+          ok: false,
+          error: `Rakuten ${res.status}${detail ? `: ${detail}` : ""}`,
+        },
         { status: 500 }
       );
     }
@@ -83,6 +112,7 @@ export async function POST(req: NextRequest) {
     }
 
     const items: any[] = Array.isArray(data?.Items) ? data.Items : [];
+    const capturedAt = new Date().toISOString();
     const rows = items
       .map((wrap: any) => {
         const it = wrap?.Item ?? wrap ?? {};
@@ -97,6 +127,7 @@ export async function POST(req: NextRequest) {
           genre_id: String(genreId),
           rank,
           item_id: String(it.itemCode ?? url ?? ""),
+          captured_at: capturedAt,
 
           item_name: itemName,
           title: itemName, // 互換のため title も保存
@@ -122,7 +153,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 同分内の重複防止（captured_minute のユニーク前提）
-    const { error, count } = await supabase
+    const { error, count } = await supabase!
       .from("market_rankings")
       .upsert(rows, {
         onConflict: "platform,genre_id,rank,captured_minute",

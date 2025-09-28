@@ -12,11 +12,35 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
 
-// ビン→ラベルへ整形（例：0-5k, 5k-10k ...）
-  const max = 50000; const buckets = 10; const step = max / buckets;
-  const series = (data ?? []).map((r: any) => ({
-    label: `${Math.round((r.bin-1)*step/1000)}k–${Math.round(r.bin*step/1000)}k`,
-    value: r.cnt as number,
-  }));
+  // ビン→ラベルへ整形（例：0〜5千, 5千〜1万 ...）
+  const max = 50000;
+  const buckets = 10;
+  const step = max / buckets;
+
+  const formatSegment = (value: number) => {
+    if (value <= 0) return "0";
+    if (value >= 10000) {
+      const unit = value / 10000;
+      const str = Number.isInteger(unit)
+        ? `${unit}`
+        : `${unit.toFixed(1)}`.replace(/\.0$/, "");
+      return `${str}万`;
+    }
+    const unit = value / 1000;
+    const str = Number.isInteger(unit)
+      ? `${unit}`
+      : `${unit.toFixed(1)}`.replace(/\.0$/, "");
+    return `${str}千`;
+  };
+
+  const series = (data ?? []).map((r: any) => {
+    const bin = Number(r.bin);
+    const labelStart = formatSegment(step * (bin - 1));
+    const labelEnd = formatSegment(step * bin);
+    return {
+      label: `${labelStart}〜${labelEnd}`,
+      value: Number(r.cnt),
+    };
+  });
   return NextResponse.json({ ok: true, data: series });
 }

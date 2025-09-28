@@ -24,12 +24,19 @@ const supabase = createClient(
 export default async function DashboardPage({
                                               searchParams,
                                             }: {
-  // ✅ Promise で受け取り
-  searchParams: Promise<{ genre?: string }>;
+  searchParams: Promise<
+    URLSearchParams | Record<string, string | string[] | undefined>
+  >;
 }) {
-  // ✅ まず await
   const sp = await searchParams;
-  const genreId = sp?.genre ?? "216129";
+  const rawGenre =
+    sp instanceof URLSearchParams
+      ? sp.get("genre")
+      : (sp as Record<string, string | string[] | undefined>)?.genre;
+  const defaultGenre = "100486"; // 楽天ランキングAPIで取得できるジュエリー系ジャンル
+  const genreId = Array.isArray(rawGenre)
+    ? rawGenre[0] ?? defaultGenre
+    : rawGenre ?? defaultGenre;
 
   // ----- 以下はそのまま -----
   const { data: latest, error: latestErr } = await supabase
@@ -41,14 +48,21 @@ export default async function DashboardPage({
     .maybeSingle();
 
   let rankings:
-    | Array<{ rank: number; title: string | null; price: string | null; url: string | null; captured_at: string }>
+    | Array<{
+        rank: number;
+        title: string | null;
+        price: string | null;
+        url: string | null;
+        shop_name: string | null;
+        captured_at: string;
+      }>
     | [] = [];
   let listErr: any = null;
 
   if (latest?.captured_at) {
     const { data, error } = await supabase
       .from("market_rankings")
-      .select("rank, title, price, url, captured_at")
+      .select("rank, title, price, url, shop_name, captured_at")
       .eq("genre_id", genreId)
       .eq("captured_at", latest.captured_at)
       .order("rank", { ascending: true })
@@ -66,24 +80,14 @@ export default async function DashboardPage({
 
   return (
     <div className="grid gap-6 md:grid-cols-12">
-      <div className="md:col-span-12 flex items-center justify-between">
+      <div className="md:col-span-12 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold">楽天トレンドダッシュボード</h1>
         <FetchRakutenButton genreId={genreId} />
       </div>
 
-      <div className="md:col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2"><PriceHistogram genreId={genreId} /></div>
-        <ReviewStatsCard genreId={genreId} />
-      </div>
-
-      <div className="md:col-span-12 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <TopShopsTable genreId={genreId} />
-        <KeywordList genreId={genreId} />
-      </div>
-
       <Card className="md:col-span-12">
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>楽天ランキング（ジャンル切替）</CardTitle>
+          <CardTitle>楽天ランキング</CardTitle>
         </CardHeader>
         <CardContent>
           <GenreFilter />
@@ -101,12 +105,22 @@ export default async function DashboardPage({
         </CardContent>
       </Card>
 
-      <Card className="md:col-span-6">
+      <div className="md:col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2"><PriceHistogram genreId={genreId} /></div>
+        <ReviewStatsCard genreId={genreId} />
+      </div>
+
+      <div className="md:col-span-12 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <TopShopsTable genreId={genreId} />
+        <KeywordList genreId={genreId} />
+      </div>
+
+      <Card className="md:col-span-12">
         <CardHeader><CardTitle>価格 Top10（最新スナップショット）</CardTitle></CardHeader>
         <CardContent><BarChart data={priceTop10} title="価格(円)" /></CardContent>
       </Card>
 
-      <Card className="md:col-span-6">
+      <Card className="md:col-span-12">
         <CardHeader><CardTitle>ランキング Top30（{capturedLabel}）</CardTitle></CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -115,6 +129,7 @@ export default async function DashboardPage({
               <tr className="text-left border-b">
                 <th className="p-2">順位</th>
                 <th className="p-2">商品名</th>
+                <th className="p-2">ショップ名</th>
                 <th className="p-2">価格</th>
               </tr>
               </thead>
@@ -127,6 +142,7 @@ export default async function DashboardPage({
                       {item.title}
                     </a>
                   </td>
+                  <td className="p-2">{item.shop_name ?? "—"}</td>
                   <td className="p-2">{item.price != null ? `${Number(item.price).toLocaleString()} 円` : "—"}</td>
                 </tr>
               ))}

@@ -54,7 +54,9 @@ group by 1,2;
 create or replace view v_top_shops as
 select platform, genre_id, shop_name,
        count(*) as items,
-       avg(price::numeric) as avg_price
+       avg(price::numeric) as avg_price,
+       min(price::numeric) as min_price,
+       max(price::numeric) as max_price
 from latest_rankings
 where shop_name is not null
 group by 1,2,3
